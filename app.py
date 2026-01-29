@@ -8,7 +8,7 @@ from PIL import Image
 try:
     from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, ColumnsAutoSizeMode, JsCode
 except ImportError:
-    st.error("requirements.txt에 streamlit-aggrid 추가가 필요합니다.")
+    st.error("오력: requirements.txt에 'streamlit-aggrid'가 누락되었습니다.")
 
 # --- 1. 앱 기본 설정 ---
 st.set_page_config(
@@ -29,101 +29,99 @@ def get_base64_of_bin_file(bin_file):
 
 logo_bin = get_base64_of_bin_file(logo_file)
 
-# 헤더 구성 (로고 + 고정 문구)
-header_html = f"""
-<div style="display: flex; align-items: center; padding: 10px; background-color: white; border-bottom: 2px solid #e06000; margin-bottom: 20px;">
+# 상단 고정 헤더
+st.markdown(f"""
+<div style="display: flex; align-items: center; padding: 10px; border-bottom: 2px solid #e06000; margin-bottom: 20px;">
     <img src="data:image/png;base64,{logo_bin}" style="height: 40px; margin-right: 15px;">
-    <h2 style="margin: 0; color: #333; font-family: sans-serif;">울산다운1차 작업 관리</h2>
+    <h2 style="margin: 0; color: #333;">울산다운1차 작업 관리</h2>
 </div>
-"""
-st.markdown(header_html, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# --- 3. 사이드바 구성 ---
+# --- 3. 사이드바 구성 (드롭다운 방식) ---
 with st.sidebar:
     st.header("⚙️ 관리 설정")
     
-    # 동 선택 (101동~120동)
+    # 동 선택 목록
     b_list = [f"{i}동" for i in range(101, 121)]
     selected_b = st.selectbox("🏢 동 선택", b_list)
     
-    # 현황 선택
+    # 현황 선택 목록 (요청하신 대로 드롭다운으로 변경)
     status_list = ["실내기", "실외기", "판넬", "시운전"]
-    selected_status = st.radio("📋 현황 목록", status_list)
+    selected_status = st.selectbox("📋 현황 선택", status_list)
     
     st.divider()
     st.caption("우미건설(주) 울산다운1차 설비팀")
 
-# --- 4. 데이터 로직 ---
-# 동 + 현황별로 고유한 키 생성
-data_key = f"data_{selected_b}_{selected_status}"
+# --- 4. 데이터 로직 (오류 방지 강화) ---
+data_key = f"df_{selected_b}_{selected_status}"
 
-@st.cache_data
 def create_initial_data():
     rows = [f"{i}F" for i in range(20, 0, -1)]
     cols = ["층", "1호", "2호", "3호", "4호", "5호", "비고"]
-    # 초기값은 모두 공백
-    return pd.DataFrame([[r] + [""]*6 for r in rows], columns=cols)
+    new_df = pd.DataFrame([[str(r)] + [""]*6 for r in rows], columns=cols)
+    return new_df
 
+# 세션에 데이터가 없으면 초기화
 if data_key not in st.session_state:
     st.session_state[data_key] = create_initial_data()
 
-df = st.session_state[data_key]
+# 데이터프레임 복사본 사용 (AttributeError 방지)
+current_df = st.session_state[data_key].copy()
 
-# --- 5. 클릭 시 색상 변경 로직 (핵심 기능) ---
-# JavaScript: 셀을 클릭하면 값이 "완료"로 바뀌고 색상이 변함
+# --- 5. 클릭 시 색상 변경 로직 ---
 cell_clicked_js = JsCode("""
 function(event) {
     if (event.column.colId !== '층' && event.column.colId !== '비고') {
-        if (event.value === 'V') {
-            event.node.setDataValue(event.column.colId, '');
-        } else {
-            event.node.setDataValue(event.column.colId, 'V');
-        }
+        let currVal = event.value;
+        event.node.setDataValue(event.column.colId, currVal === 'V' ? '' : 'V');
     }
 }
 """)
 
-# 색상 조건부 서식
 cellstyle_jscode = JsCode("""
 function(params) {
     if (params.value === 'V') {
         return {
             'color': '#e06000',
             'backgroundColor': '#e06000',
-            'cursor': 'pointer'
         }
     }
-    return {'cursor': 'pointer'};
+    return null;
 };
 """)
 
-gb = GridOptionsBuilder.from_dataframe(df)
-gb.configure_default_column(editable=False, minWidth=100) # 직접 입력 방지
-gb.configure_grid_options(onCellClicked=cell_clicked_js) # 클릭 이벤트 등록
+# GridOptions 설정
+gb = GridOptionsBuilder.from_dataframe(current_df)
+gb.configure_default_column(editable=False, minWidth=100, sortable=False)
+gb.configure_grid_options(onCellClicked=cell_clicked_js)
 
-for col in df.columns[1:-1]:
+for col in current_df.columns[1:-1]:
     gb.configure_column(col, cellStyle=cellstyle_jscode)
 
 grid_options = gb.build()
 
 # --- 6. 화면 표시 ---
 st.subheader(f"📍 {selected_b} - {selected_status} 공정 현황")
-st.write("👉 **해당 동/호수 칸을 터치(클릭)하면 주황색으로 완료 표시됩니다.**")
+st.info("💡 해당 칸을 **클릭**하면 주황색으로 완료 표시됩니다.")
 
 grid_response = AgGrid(
-    df,
+    current_df,
     gridOptions=grid_options,
-    update_mode=GridUpdateMode.VALUE_CHANGED | GridUpdateMode.SELECTION_CHANGED,
+    update_mode=GridUpdateMode.VALUE_CHANGED,
     allow_unsafe_jscode=True,
     theme='balham',
-    key=data_key, # 동/공정 변경 시 표를 새로 고침
-    height=500
+    key=f"grid_{data_key}", # 고유 키 부여로 충돌 방지
+    height=550,
+    columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS
 )
 
 # 데이터 실시간 저장
 if grid_response['data'] is not None:
-    st.session_state[data_key] = pd.DataFrame(grid_response['data'])
+    # AgGrid 결과를 다시 데이터프레임으로 변환하여 저장
+    updated_df = pd.DataFrame(grid_response['data'])
+    st.session_state[data_key] = updated_df
 
+# 하단 저장 버튼
 st.divider()
-if st.button("💾 서버 현황 확정 저장"):
-    st.success(f"{selected_b} {selected_status} 작업 현황이 안전하게 저장되었습니다.")
+if st.button("💾 데이터 최종 확정"):
+    st.success(f"[{selected_b} {selected_status}] 현황이 성공적으로 저장되었습니다.")
