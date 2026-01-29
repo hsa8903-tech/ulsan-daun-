@@ -9,7 +9,7 @@ st.set_page_config(
     page_title="울산다운1차 작업 관리",
     page_icon="🏗️",
     layout="wide",
-    initial_sidebar_state="collapsed" # 모바일에서는 버튼으로 제어하기 위해 기본은 닫음
+    initial_sidebar_state="expanded" # 최대한 펼쳐진 상태 유지 시도
 )
 
 # 라이브러리 체크
@@ -35,7 +35,7 @@ def save_all_data(data_dict):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(save_data, f)
 
-# --- 3. 헤더 및 모바일 전용 버튼 ---
+# --- 3. 로고 및 헤더 설정 ---
 logo_file = "Lynn BI.png"
 def get_base64_of_bin_file(bin_file):
     if os.path.exists(logo_file):
@@ -46,35 +46,32 @@ def get_base64_of_bin_file(bin_file):
 
 logo_bin = get_base64_of_bin_file(logo_file)
 
-# CSS: 모바일에서 상단 버튼 강조
+# CSS: 상단 바 및 버튼 스타일
 st.markdown(f"""
 <style>
-    .block-container {{ padding-top: 0rem; padding-bottom: 0rem; }}
+    .block-container {{ padding-top: 0.5rem; }}
     [data-testid="stHeader"] {{ visibility: hidden; }}
-    /* 모바일에서 설정창 열기 버튼 스타일 */
-    .mobile-btn {{
-        background-color: #e06000;
-        color: white;
-        padding: 8px 15px;
+    /* 모바일에서 버튼이 더 잘 보이도록 설정 */
+    div.stButton > button {{
+        background-color: #f8f9fa;
+        border: 1px solid #ddd;
         border-radius: 5px;
-        text-align: center;
-        margin-bottom: 10px;
-        font-weight: bold;
-        cursor: pointer;
     }}
 </style>
 """, unsafe_allow_html=True)
 
 # 최상단 로고 바
 st.markdown(f"""
-<div style="display: flex; align-items: center; padding: 10px 5px; border-bottom: 2px solid #e06000;">
+<div style="display: flex; align-items: center; padding: 10px 5px; border-bottom: 2px solid #e06000; margin-bottom: 10px;">
     <img src="data:image/png;base64,{logo_bin}" style="height: 25px; margin-right: 10px;">
     <h4 style="margin: 0; color: #333; font-size: 1.1rem;">울산다운1차 작업 관리</h4>
 </div>
 """, unsafe_allow_html=True)
 
-# 💡 [핵심] 모바일 사용자를 위한 사이드바 호출 가이드
-st.info("💡 동/현황 변경은 왼쪽 상단의 **'>' 화살표** 또는 **사이드바**를 열어주세요.")
+# 💡 [핵심] 상단에 사이드바 제어 안내 문구 추가
+col_btn, col_empty = st.columns([1, 2])
+with col_btn:
+    st.info("👈 **왼쪽 화살표(>)를 눌러 메뉴를 여세요**")
 
 # --- 4. 사이드바 구성 ---
 with st.sidebar:
@@ -89,6 +86,7 @@ with st.sidebar:
     if st.button("💾 전체 현황 저장 (F5 대응)", use_container_width=True):
         save_all_data(st.session_state)
         st.success("저장 완료")
+    
     st.caption("우미건설(주) 울산다운1차 설비팀")
 
 # --- 5. 데이터 초기화 및 로드 ---
@@ -104,7 +102,7 @@ if data_key not in st.session_state:
     cols = ["층", "1호", "2호", "3호", "4호", "5호", "비고"]
     st.session_state[data_key] = pd.DataFrame([[str(r)] + [""]*6 for r in rows], columns=cols)
 
-# --- 6. 클릭 토글 및 열 순서 고정 로직 ---
+# --- 6. 클릭 토글 및 순서 고정 로직 ---
 cell_clicked_js = JsCode("""
 function(event) {
     if (event.column.colId !== '층' && event.column.colId !== '비고') {
@@ -124,8 +122,10 @@ function(params) {
 }
 """)
 
-# 💡 [핵심] 컬럼 정의 시 고정 순서 및 이동 방지 설정
-gb = GridOptionsBuilder.from_dataframe(st.session_state[data_key])
+# 💡 [핵심] 순서 강제 지정을 위해 데이터프레임 컬럼 순서 재배치
+current_df = st.session_state[data_key][["층", "1호", "2호", "3호", "4호", "5호", "비고"]]
+
+gb = GridOptionsBuilder.from_dataframe(current_df)
 
 gb.configure_default_column(
     editable=False, 
@@ -133,16 +133,18 @@ gb.configure_default_column(
     minWidth=42, 
     sortable=False,
     suppressMenu=True,
-    suppressMovable=True, # 💡 열 이동 금지 (순서 고정)
+    suppressMovable=True, # 열 이동 금지
     cellStyle={'textAlign': 'center', 'fontSize': '12px'}
 )
 
-# 층수 고정
+# 좌측 '층' 열 고정 및 순서 고정
 gb.configure_column("층", width=55, pinned='left', suppressMovable=True, cellStyle={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'})
-# 호수 순서대로 개별 설정 (순서 강제)
+
+# 각 호수 열 순서대로 개별 설정
 for col in ["1호", "2호", "3호", "4호", "5호"]:
     gb.configure_column(col, cellStyle=cellstyle_jscode, suppressMovable=True)
-# 비고열 설정
+
+# 비고 열 설정
 gb.configure_column("비고", width=120, editable=True, suppressMovable=True)
 
 gb.configure_grid_options(
@@ -158,7 +160,7 @@ grid_options = gb.build()
 st.write(f"**📍 {selected_b} - {selected_status}**")
 
 grid_response = AgGrid(
-    st.session_state[data_key],
+    current_df,
     gridOptions=grid_options,
     update_mode=GridUpdateMode.VALUE_CHANGED,
     allow_unsafe_jscode=True,
