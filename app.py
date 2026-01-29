@@ -29,6 +29,7 @@ def get_base64_of_bin_file(bin_file):
 
 logo_bin = get_base64_of_bin_file(logo_file)
 
+# 상단 고정 헤더
 st.markdown(f"""
 <div style="display: flex; align-items: center; padding: 10px; border-bottom: 2px solid #e06000; margin-bottom: 20px;">
     <img src="data:image/png;base64,{logo_bin}" style="height: 35px; margin-right: 15px;">
@@ -53,65 +54,63 @@ data_key = f"df_{selected_b}_{selected_status}"
 
 def create_initial_data():
     rows = [f"{i}F" for i in range(20, 0, -1)]
-    # 호수를 더 많이 표시할 수 있도록 1~8호까지 구성 (필요시 조절)
     cols = ["층", "1호", "2호", "3호", "4호", "5호", "6호", "비고"]
     return pd.DataFrame([[str(r)] + [""]*7 for r in rows], columns=cols)
 
 if data_key not in st.session_state:
     st.session_state[data_key] = create_initial_data()
 
-# --- 5. 클릭 및 색상 로직 (토글 기능 강화) ---
+# --- 5. 클릭 및 색상 로직 (토글 및 글자 보임 최적화) ---
 
-# 클릭하면 값이 있으면 지우고, 없으면 'V'를 넣는 자바스크립트
+# 클릭 시 V <-> 공백 무조건 전환 로직
 cell_clicked_js = JsCode("""
 function(event) {
     if (event.column.colId !== '층' && event.column.colId !== '비고') {
-        let colId = event.column.colId;
-        let node = event.node;
-        let currentVal = node.data[colId];
+        const colId = event.column.colId;
+        const node = event.node;
+        const currentVal = node.data[colId];
         
-        if (currentVal === 'V') {
-            node.setDataValue(colId, '');
-        } else {
-            node.setDataValue(colId, 'V');
-        }
+        // 확실한 토글: V가 있으면 삭제, 없으면 V 삽입
+        const newVal = (currentVal === 'V') ? '' : 'V';
+        node.setDataValue(colId, newVal);
     }
 }
 """)
 
-# 값이 'V'일 때만 주황색 배경 적용
+# 색상 및 텍스트 숨김 (주황색 칸은 글자가 안 보이게 배경색과 동일하게 처리)
 cellstyle_jscode = JsCode("""
 function(params) {
     if (params.value === 'V') {
         return {
             'backgroundColor': '#e06000',
-            'color': '#e06000'
+            'color': '#e06000',
+            'textAlign': 'center'
         }
     }
-    return null;
+    return {'textAlign': 'center'};
 }
 """)
 
 gb = GridOptionsBuilder.from_dataframe(st.session_state[data_key])
 
-# 💡 열 너비 절반 축소 (45px로 고정)
+# 💡 열 너비 조정: '...'이 나오지 않도록 최소 너비를 65로 조정 (절반 느낌 유지)
 gb.configure_default_column(
     editable=False, 
-    width=45, 
-    minWidth=45, 
-    maxWidth=50, 
+    width=65, 
+    minWidth=65, 
     sortable=False,
-    suppressMenu=True
+    suppressMenu=True,
+    cellStyle={'textAlign': 'center'}
 )
 
-# 층과 비고는 예외적으로 너비 조정
-gb.configure_column("층", width=55, minWidth=55, pinned='left')
-gb.configure_column("비고", width=120, minWidth=100, editable=True)
+# 특정 열 예외 설정
+gb.configure_column("층", width=70, minWidth=70, pinned='left', cellStyle={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'})
+gb.configure_column("비고", width=150, minWidth=120, editable=True)
 
 # 클릭 이벤트 등록
 gb.configure_grid_options(onCellClicked=cell_clicked_js)
 
-# 전 컬럼에 색상 스타일 적용
+# 호수 컬럼들에 스타일 적용
 for col in ["1호", "2호", "3호", "4호", "5호", "6호"]:
     gb.configure_column(col, cellStyle=cellstyle_jscode)
 
@@ -119,7 +118,7 @@ grid_options = gb.build()
 
 # --- 6. 화면 표시 ---
 st.subheader(f"📍 {selected_b} - {selected_status}")
-st.write("👉 칸을 **클릭**하면 색상이 토글(주황색 ↔ 흰색)됩니다.")
+st.write("👉 칸을 **클릭**하면 색상이 바뀝니다. (한 번 더 클릭하면 취소)")
 
 grid_response = AgGrid(
     st.session_state[data_key],
@@ -127,15 +126,15 @@ grid_response = AgGrid(
     update_mode=GridUpdateMode.VALUE_CHANGED,
     allow_unsafe_jscode=True,
     theme='balham',
-    key=f"grid_{selected_b}_{selected_status}", # 동/현황별 유니크 키
-    height=550,
+    key=f"grid_{selected_b}_{selected_status}",
+    height=600,
     columns_auto_size_mode=ColumnsAutoSizeMode.NO_AUTOSIZE
 )
 
-# 데이터 실시간 세션 저장
+# 데이터 실시간 저장
 if grid_response['data'] is not None:
     st.session_state[data_key] = pd.DataFrame(grid_response['data'])
 
 st.divider()
-if st.button("💾 데이터 서버 확정 저장"):
-    st.success(f"[{selected_b} {selected_status}] 현황 저장 완료")
+if st.button("💾 현황 확정 저장"):
+    st.success(f"[{selected_b} {selected_status}] 데이터가 안전하게 저장되었습니다.")
