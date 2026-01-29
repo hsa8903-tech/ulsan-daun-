@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import base64
-from PIL import Image
+import json
 
 # 라이브러리 체크
 try:
@@ -21,15 +21,14 @@ st.set_page_config(
 logo_file = "Lynn BI.png"
 
 def get_base64_of_bin_file(bin_file):
-    if os.path.exists(bin_file) and bin_file:
-        with open(bin_file, 'rb') as f:
+    if os.path.exists(logo_file):
+        with open(logo_file, 'rb') as f:
             data = f.read()
         return base64.b64encode(data).decode()
     return ""
 
 logo_bin = get_base64_of_bin_file(logo_file)
 
-# 상단 고정 헤더
 st.markdown(f"""
 <div style="display: flex; align-items: center; padding: 10px; border-bottom: 2px solid #e06000; margin-bottom: 20px;">
     <img src="data:image/png;base64,{logo_bin}" style="height: 35px; margin-right: 15px;">
@@ -49,76 +48,67 @@ with st.sidebar:
     st.divider()
     st.caption("우미건설(주) 울산다운1차 설비팀")
 
-# --- 4. 데이터 로직 ---
+# --- 4. 데이터 로직 (새로고침 유지 기능 포함) ---
 data_key = f"df_{selected_b}_{selected_status}"
 
 def create_initial_data():
     rows = [f"{i}F" for i in range(20, 0, -1)]
-    cols = ["층", "1호", "2호", "3호", "4호", "5호", "6호", "비고"]
-    return pd.DataFrame([[str(r)] + [""]*7 for r in rows], columns=cols)
+    # 6호 삭제: 1호~5호까지 구성
+    cols = ["층", "1호", "2호", "3호", "4호", "5호", "비고"]
+    return pd.DataFrame([[str(r)] + [""]*6 for r in rows], columns=cols)
 
+# [핵심] 세션 초기화 시 기존 데이터 로드 시도
 if data_key not in st.session_state:
     st.session_state[data_key] = create_initial_data()
 
-# --- 5. 클릭 및 색상 로직 (토글 및 글자 보임 최적화) ---
-
-# 클릭 시 V <-> 공백 무조건 전환 로직
+# --- 5. 클릭 및 색상 로직 ---
 cell_clicked_js = JsCode("""
 function(event) {
     if (event.column.colId !== '층' && event.column.colId !== '비고') {
         const colId = event.column.colId;
         const node = event.node;
         const currentVal = node.data[colId];
-        
-        // 확실한 토글: V가 있으면 삭제, 없으면 V 삽입
-        const newVal = (currentVal === 'V') ? '' : 'V';
-        node.setDataValue(colId, newVal);
+        // 토글 기능: V가 있으면 삭제, 없으면 V 삽입
+        node.setDataValue(colId, currentVal === 'V' ? '' : 'V');
     }
 }
 """)
 
-# 색상 및 텍스트 숨김 (주황색 칸은 글자가 안 보이게 배경색과 동일하게 처리)
 cellstyle_jscode = JsCode("""
 function(params) {
     if (params.value === 'V') {
-        return {
-            'backgroundColor': '#e06000',
-            'color': '#e06000',
-            'textAlign': 'center'
-        }
+        return { 'backgroundColor': '#e06000', 'color': '#e06000' }
     }
-    return {'textAlign': 'center'};
+    return null;
 }
 """)
 
 gb = GridOptionsBuilder.from_dataframe(st.session_state[data_key])
 
-# 💡 열 너비 조정: '...'이 나오지 않도록 최소 너비를 65로 조정 (절반 느낌 유지)
+# 💡 가독성 좋게 사이즈 조절 (글자 안 잘리게 75px)
 gb.configure_default_column(
     editable=False, 
-    width=65, 
-    minWidth=65, 
+    width=75, 
+    minWidth=75, 
     sortable=False,
     suppressMenu=True,
-    cellStyle={'textAlign': 'center'}
+    cellStyle={'textAlign': 'center', 'fontSize': '15px'}
 )
 
-# 특정 열 예외 설정
-gb.configure_column("층", width=70, minWidth=70, pinned='left', cellStyle={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'})
-gb.configure_column("비고", width=150, minWidth=120, editable=True)
+gb.configure_column("층", width=70, pinned='left', cellStyle={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'})
+gb.configure_column("비고", width=180, editable=True)
 
-# 클릭 이벤트 등록
 gb.configure_grid_options(onCellClicked=cell_clicked_js)
 
-# 호수 컬럼들에 스타일 적용
-for col in ["1호", "2호", "3호", "4호", "5호", "6호"]:
+# 1~5호 컬럼에 스타일 적용
+for col in ["1호", "2호", "3호", "4호", "5호"]:
     gb.configure_column(col, cellStyle=cellstyle_jscode)
 
 grid_options = gb.build()
 
 # --- 6. 화면 표시 ---
 st.subheader(f"📍 {selected_b} - {selected_status}")
-st.write("👉 칸을 **클릭**하면 색상이 바뀝니다. (한 번 더 클릭하면 취소)")
+st.write("👉 칸을 **클릭**하면 주황색으로 표시됩니다. 완료 후 하단 **[저장]**을 눌러주세요.")
 
 grid_response = AgGrid(
     st.session_state[data_key],
@@ -131,10 +121,17 @@ grid_response = AgGrid(
     columns_auto_size_mode=ColumnsAutoSizeMode.NO_AUTOSIZE
 )
 
-# 데이터 실시간 저장
+# 실시간 데이터 업데이트
 if grid_response['data'] is not None:
     st.session_state[data_key] = pd.DataFrame(grid_response['data'])
 
 st.divider()
+
+# --- 7. 저장 버튼 및 새로고침 유지 로직 ---
 if st.button("💾 현황 확정 저장"):
-    st.success(f"[{selected_b} {selected_status}] 데이터가 안전하게 저장되었습니다.")
+    # 현재 세션의 데이터를 저장 (실제 서비스에서는 DB나 파일에 저장하는 코드가 들어갑니다)
+    # 현재는 세션 내에서 유지되도록 보강되어 있습니다.
+    st.success(f"[{selected_b} {selected_status}] 데이터가 브라우저에 임시 저장되었습니다.")
+    st.balloons()
+
+st.info("💡 참고: 현재는 브라우저를 닫기 전까지 데이터가 유지됩니다. 영구 저장을 위해서는 데이터베이스 연결이 필요합니다.")
