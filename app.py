@@ -9,14 +9,14 @@ st.set_page_config(
     page_title="울산다운1차 작업 관리",
     page_icon="🏗️",
     layout="wide",
-    initial_sidebar_state="expanded" # 최대한 펼쳐진 상태 유지 시도
+    initial_sidebar_state="expanded" # 처음에 열린 상태로 시작
 )
 
 # 라이브러리 체크
 try:
     from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, ColumnsAutoSizeMode, JsCode
 except ImportError:
-    st.error("오류: requirements.txt에 'streamlit-aggrid'가 누락되었습니다.")
+    st.error("오류: 'streamlit-aggrid'가 누락되었습니다.")
 
 # --- 2. 데이터 영구 저장/로드 함수 ---
 DB_FILE = "installation_data.json"
@@ -35,7 +35,7 @@ def save_all_data(data_dict):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(save_data, f)
 
-# --- 3. 로고 및 헤더 설정 ---
+# --- 3. 헤더 및 상단 메뉴 제어 버튼 ---
 logo_file = "Lynn BI.png"
 def get_base64_of_bin_file(bin_file):
     if os.path.exists(logo_file):
@@ -46,32 +46,31 @@ def get_base64_of_bin_file(bin_file):
 
 logo_bin = get_base64_of_bin_file(logo_file)
 
-# CSS: 상단 바 및 버튼 스타일
+# CSS: 상단 바 스타일
 st.markdown(f"""
 <style>
     .block-container {{ padding-top: 0.5rem; }}
     [data-testid="stHeader"] {{ visibility: hidden; }}
-    /* 모바일에서 버튼이 더 잘 보이도록 설정 */
-    div.stButton > button {{
-        background-color: #f8f9fa;
-        border: 1px solid #ddd;
+    /* 사이드바가 닫혔을 때 버튼 위치 조정 */
+    .stButton > button {{
         border-radius: 5px;
+        font-weight: bold;
     }}
 </style>
 """, unsafe_allow_html=True)
 
 # 최상단 로고 바
 st.markdown(f"""
-<div style="display: flex; align-items: center; padding: 10px 5px; border-bottom: 2px solid #e06000; margin-bottom: 10px;">
+<div style="display: flex; align-items: center; padding: 10px 5px; border-bottom: 2px solid #e06000; margin-bottom: 5px;">
     <img src="data:image/png;base64,{logo_bin}" style="height: 25px; margin-right: 10px;">
     <h4 style="margin: 0; color: #333; font-size: 1.1rem;">울산다운1차 작업 관리</h4>
 </div>
 """, unsafe_allow_html=True)
 
-# 💡 [핵심] 상단에 사이드바 제어 안내 문구 추가
-col_btn, col_empty = st.columns([1, 2])
-with col_btn:
-    st.info("👈 **왼쪽 화살표(>)를 눌러 메뉴를 여세요**")
+# 💡 [핵심] 사이드바를 다시 열기 위한 안내 버튼 배치
+col_toggle, col_empty = st.columns([1, 2])
+with col_toggle:
+    st.info("👈 **동/현황 변경은 왼쪽 상단의 '>'를 누르세요.**")
 
 # --- 4. 사이드바 구성 ---
 with st.sidebar:
@@ -89,7 +88,7 @@ with st.sidebar:
     
     st.caption("우미건설(주) 울산다운1차 설비팀")
 
-# --- 5. 데이터 초기화 및 로드 ---
+# --- 5. 데이터 로직 ---
 data_key = f"df_{selected_b}_{selected_status}"
 if 'db_loaded' not in st.session_state:
     saved_db = load_all_data()
@@ -102,7 +101,7 @@ if data_key not in st.session_state:
     cols = ["층", "1호", "2호", "3호", "4호", "5호", "비고"]
     st.session_state[data_key] = pd.DataFrame([[str(r)] + [""]*6 for r in rows], columns=cols)
 
-# --- 6. 클릭 토글 및 순서 고정 로직 ---
+# --- 6. 클릭 및 디자인 로직 ---
 cell_clicked_js = JsCode("""
 function(event) {
     if (event.column.colId !== '층' && event.column.colId !== '비고') {
@@ -122,9 +121,8 @@ function(params) {
 }
 """)
 
-# 💡 [핵심] 순서 강제 지정을 위해 데이터프레임 컬럼 순서 재배치
+# 순서 고정 및 틀 고정
 current_df = st.session_state[data_key][["층", "1호", "2호", "3호", "4호", "5호", "비고"]]
-
 gb = GridOptionsBuilder.from_dataframe(current_df)
 
 gb.configure_default_column(
@@ -133,27 +131,16 @@ gb.configure_default_column(
     minWidth=42, 
     sortable=False,
     suppressMenu=True,
-    suppressMovable=True, # 열 이동 금지
+    suppressMovable=True,
     cellStyle={'textAlign': 'center', 'fontSize': '12px'}
 )
 
-# 좌측 '층' 열 고정 및 순서 고정
 gb.configure_column("층", width=55, pinned='left', suppressMovable=True, cellStyle={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'})
-
-# 각 호수 열 순서대로 개별 설정
 for col in ["1호", "2호", "3호", "4호", "5호"]:
     gb.configure_column(col, cellStyle=cellstyle_jscode, suppressMovable=True)
-
-# 비고 열 설정
 gb.configure_column("비고", width=120, editable=True, suppressMovable=True)
 
-gb.configure_grid_options(
-    rowHeight=30, 
-    headerHeight=35, 
-    onCellClicked=cell_clicked_js,
-    suppressColumnVirtualisation=True
-)
-
+gb.configure_grid_options(rowHeight=30, headerHeight=35, onCellClicked=cell_clicked_js)
 grid_options = gb.build()
 
 # --- 7. 화면 표시 ---
