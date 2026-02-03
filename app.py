@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import json
+import datetime
 
 # --- 1. 앱 기본 설정 ---
 st.set_page_config(
@@ -10,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 2. 데이터 영구 저장/로드 시스템 (규격 갱신 로직 추가) ---
+# --- 2. 데이터 영구 저장/로드 시스템 ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "installation_data.json")
 
@@ -33,7 +34,6 @@ def load_data_from_file():
                 data = json.load(f)
                 for key, value in data.items():
                     df = pd.read_json(value, orient='split')
-                    # 만약 불러온 데이터에 '비고'가 있거나 규격이 다르면 초기화 대상에서 제외하고 갱신
                     st.session_state[key] = df
         except Exception as e:
             st.error(f"데이터 로드 오류: {e}")
@@ -56,7 +56,7 @@ if 'initialized' not in st.session_state:
     load_data_from_file()
     st.session_state['initialized'] = True
 
-# --- 3. 헤더 디자인 및 격자선 CSS ---
+# --- 3. 헤더 디자인 ---
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; }
@@ -85,18 +85,18 @@ with col_s:
     status_list = ["실내기", "실외기", "판넬", "시운전"]
     selected_status = st.selectbox("📋 공정 선택", status_list)
 
-# --- 5. 데이터 준비 (101동 및 기존 데이터 규격 자동 갱신) ---
+# --- 5. 데이터 준비 ---
 data_key = f"df_{selected_b}_{selected_status}"
 
-# 데이터가 없거나, 옛날 규격(열 개수가 다르거나 호수 정보가 없음)인 경우 새로 생성
+# 데이터가 없거나 규격이 맞지 않으면 초기화
 if data_key not in st.session_state:
     st.session_state[data_key] = create_initial_data(selected_b)
 else:
-    # 101동 등이 옛날 방식일 경우 강제 업데이트 로직
     current_df = st.session_state[data_key]
     if "비고" in current_df.columns or len(current_df.columns) != 6:
         st.session_state[data_key] = create_initial_data(selected_b)
-    elif not current_df.iloc[0, 1].endswith("호"): # 호수 텍스트가 없는 옛날 데이터인 경우
+    elif not str(current_df.iloc[0, 1]).endswith("호") and "/" not in str(current_df.iloc[0, 1]):
+        # 호수도 아니고 날짜(슬래시)도 없으면 초기화 대상
         st.session_state[data_key] = create_initial_data(selected_b)
 
 # --- 6. 저장 버튼 ---
@@ -109,24 +109,36 @@ if st.button(f"💾 {selected_b} {selected_status} 현황 영구 저장", use_co
 try:
     from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, ColumnsAutoSizeMode, JsCode
     
-    # 클릭 시 호수 텍스트 뒤에 완료 표시 토글
+    # 💡 [핵심 수정] 클릭 시 날짜 입력 및 복구 로직
     cell_clicked_js = JsCode("""
     function(event) {
         if (event.column.colId !== '층') {
-            const colId = event.column.colId;
+            const colId = event.column.colId; // 예: "1호"
             const node = event.node;
-            let val = node.data[colId];
+            const currentVal = String(node.data[colId]);
             
-            if (val.includes('✅')) {
-                node.setDataValue(colId, val.replace(' ✅', ''));
+            // 값이 날짜 형식(슬래시 / 포함)인지 확인
+            if (currentVal.includes('/')) {
+                // 날짜라면 -> 원래 호수로 복구 (예: 20층 + 1호 -> 2001호)
+                const floor = node.data['층'].replace('F', '');
+                let unit = colId.replace('호', '');
+                if (unit.length < 2) unit = '0' + unit; // 1 -> 01
+                
+                node.setDataValue(colId, floor + unit + '호');
             } else {
-                node.setDataValue(colId, val + ' ✅');
+                // 호수라면 -> 오늘 날짜 입력 (M/D)
+                const today = new Date();
+                const month = today.getMonth() + 1;
+                const day = today.getDate();
+                const dateStr = month + '/' + day;
+                
+                node.setDataValue(colId, dateStr);
             }
         }
     }
     """)
 
-    # 💡 가운데 정렬(textAlign, display, justifyContent) 강화
+    # 💡 [핵심 수정] 날짜(슬래시 포함)일 때 주황색 배경 적용
     cellstyle_jscode = JsCode("""
     function(params) {
         let style = {
@@ -136,7 +148,8 @@ try:
             'textAlign': 'center',
             'fontSize': '14px'
         };
-        if (params.value && params.value.includes('✅')) {
+        // 값이 있고 슬래시(/)가 포함되어 있으면 날짜로 간주 -> 주황색
+        if (params.value && String(params.value).includes('/')) {
             style['backgroundColor'] = '#e06000';
             style['color'] = 'white';
             style['fontWeight'] = 'bold';
