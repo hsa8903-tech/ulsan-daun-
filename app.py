@@ -16,15 +16,16 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "installation_data.json")
 
 def create_initial_data(building_name):
-    """특정 동의 초기 호수 데이터를 생성"""
+    """'층' 열 없이 1~5호만 있는 초기 데이터 생성"""
     rows = []
+    # 20층부터 1층까지 생성
     for i in range(20, 0, -1):
-        row_data = [f"{i}F"]
+        row_data = []
         for ho in range(1, 6):
             unit_number = f"{i}{ho:02d}호"
             row_data.append(unit_number)
         rows.append(row_data)
-    cols = ["층", "1호", "2호", "3호", "4호", "5호"]
+    cols = ["1호", "2호", "3호", "4호", "5호"]
     return pd.DataFrame(rows, columns=cols)
 
 def load_data_from_file():
@@ -34,6 +35,11 @@ def load_data_from_file():
                 data = json.load(f)
                 for key, value in data.items():
                     df = pd.read_json(value, orient='split')
+                    # 기존 데이터에 '층'이나 '비고'가 있다면 삭제하여 규격 통일
+                    if '층' in df.columns:
+                        df = df.drop(columns=['층'])
+                    if '비고' in df.columns:
+                        df = df.drop(columns=['비고'])
                     st.session_state[key] = df
         except Exception as e:
             st.error(f"데이터 로드 오류: {e}")
@@ -61,7 +67,7 @@ st.markdown("""
 <style>
     .block-container { padding-top: 1rem; }
     [data-testid="stHeader"] { visibility: hidden; }
-    /* 격자선 강화 및 텍스트 가운데 정렬 강제 */
+    /* 격자선 강화 및 텍스트 가운데 정렬 */
     .ag-theme-balham .ag-ltr .ag-cell {
         border-right: 1px solid #d9dcde !important;
         border-bottom: 1px solid #d9dcde !important;
@@ -88,15 +94,12 @@ with col_s:
 # --- 5. 데이터 준비 ---
 data_key = f"df_{selected_b}_{selected_status}"
 
-# 데이터가 없거나 규격이 맞지 않으면 초기화
+# 데이터가 없거나 열 개수가 5개가 아니면(옛날 규격이면) 초기화
 if data_key not in st.session_state:
     st.session_state[data_key] = create_initial_data(selected_b)
 else:
     current_df = st.session_state[data_key]
-    if "비고" in current_df.columns or len(current_df.columns) != 6:
-        st.session_state[data_key] = create_initial_data(selected_b)
-    elif not str(current_df.iloc[0, 1]).endswith("호") and "/" not in str(current_df.iloc[0, 1]):
-        # 호수도 아니고 날짜(슬래시)도 없으면 초기화 대상
+    if len(current_df.columns) != 5: # 열이 5개(1~5호)가 아니면 재생성
         st.session_state[data_key] = create_initial_data(selected_b)
 
 # --- 6. 저장 버튼 ---
@@ -109,36 +112,35 @@ if st.button(f"💾 {selected_b} {selected_status} 현황 영구 저장", use_co
 try:
     from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, ColumnsAutoSizeMode, JsCode
     
-    # 💡 [핵심 수정] 클릭 시 날짜 입력 및 복구 로직
+    # 💡 [핵심 수정] 층 열 없이도 원래 호수 계산하는 로직
     cell_clicked_js = JsCode("""
     function(event) {
-        if (event.column.colId !== '층') {
-            const colId = event.column.colId; // 예: "1호"
-            const node = event.node;
-            const currentVal = String(node.data[colId]);
+        const colId = event.column.colId; // 예: "1호"
+        const node = event.node;
+        const currentVal = String(node.data[colId]);
+        
+        // 날짜(슬래시 / 포함)인지 확인
+        if (currentVal.includes('/')) {
+            // 날짜라면 -> 원래 호수로 복구
+            // 층 열이 없으므로 행 인덱스로 층 계산 (Row 0 = 20F, Row 19 = 1F)
+            const floor = 20 - node.rowIndex; 
             
-            // 값이 날짜 형식(슬래시 / 포함)인지 확인
-            if (currentVal.includes('/')) {
-                // 날짜라면 -> 원래 호수로 복구 (예: 20층 + 1호 -> 2001호)
-                const floor = node.data['층'].replace('F', '');
-                let unit = colId.replace('호', '');
-                if (unit.length < 2) unit = '0' + unit; // 1 -> 01
-                
-                node.setDataValue(colId, floor + unit + '호');
-            } else {
-                // 호수라면 -> 오늘 날짜 입력 (M/D)
-                const today = new Date();
-                const month = today.getMonth() + 1;
-                const day = today.getDate();
-                const dateStr = month + '/' + day;
-                
-                node.setDataValue(colId, dateStr);
-            }
+            let unit = colId.replace('호', '');
+            if (unit.length < 2) unit = '0' + unit; // 1 -> 01
+            
+            node.setDataValue(colId, floor + unit + '호');
+        } else {
+            // 호수라면 -> 오늘 날짜 입력 (M/D)
+            const today = new Date();
+            const month = today.getMonth() + 1;
+            const day = today.getDate();
+            const dateStr = month + '/' + day;
+            
+            node.setDataValue(colId, dateStr);
         }
     }
     """)
 
-    # 💡 [핵심 수정] 날짜(슬래시 포함)일 때 주황색 배경 적용
     cellstyle_jscode = JsCode("""
     function(params) {
         let style = {
@@ -146,9 +148,9 @@ try:
             'alignItems': 'center',
             'justifyContent': 'center',
             'textAlign': 'center',
-            'fontSize': '14px'
+            'fontSize': '15px' // 글자 크기 약간 확대
         };
-        // 값이 있고 슬래시(/)가 포함되어 있으면 날짜로 간주 -> 주황색
+        // 날짜(슬래시 포함)면 주황색
         if (params.value && String(params.value).includes('/')) {
             style['backgroundColor'] = '#e06000';
             style['color'] = 'white';
@@ -161,15 +163,15 @@ try:
     current_df = st.session_state[data_key]
     gb = GridOptionsBuilder.from_dataframe(current_df)
 
+    # 층 열이 빠졌으므로 너비를 더 넓게(110px) 설정
     gb.configure_default_column(
         editable=False, 
-        width=90, 
+        width=110, 
         sortable=False,
         suppressMenu=True,
         suppressMovable=True
     )
 
-    gb.configure_column("층", width=70, pinned='left', cellStyle={'fontWeight': 'bold', 'backgroundColor': '#f0f0f0', 'textAlign': 'center'})
     for col in ["1호", "2호", "3호", "4호", "5호"]:
         gb.configure_column(col, cellStyle=cellstyle_jscode)
 
@@ -193,4 +195,4 @@ try:
 except ImportError:
     st.error("'streamlit-aggrid' 설치가 필요합니다.")
 
-st.caption(f"우미건설(주) 울산다운1차 설비팀 전용 - {selected_b} 작업 관리")
+st.caption(f"우미건설(주) 울산다운1차 설비팀 전용")
